@@ -3,6 +3,7 @@ package com.ktb.chatapp.service;
 import com.ktb.chatapp.dto.ProfileImageResponse;
 import com.ktb.chatapp.dto.UpdateProfileRequest;
 import com.ktb.chatapp.dto.UserResponse;
+import com.ktb.chatapp.exception.PasswordMismatchException;
 import com.ktb.chatapp.model.User;
 import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.util.FileUtil;
@@ -10,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -28,6 +30,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final FileService fileService;
+    private final PasswordEncoder passwordEncoder;
 
     @Value("${app.upload.dir:uploads}")
     private String uploadDir;
@@ -54,11 +57,15 @@ public class UserService {
      * @param email 사용자 이메일
      */
     public UserResponse updateUserProfile(String email, UpdateProfileRequest request) {
+        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+            throw new PasswordMismatchException("비밀번호가 일치하지 않습니다.");
+        }
         User user = userRepository.findByEmail(email.toLowerCase())
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다."));
 
         // 프로필 정보 업데이트
         user.setName(request.getName());
+        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         user.setUpdatedAt(LocalDateTime.now());
 
         User updatedUser = userRepository.save(user);

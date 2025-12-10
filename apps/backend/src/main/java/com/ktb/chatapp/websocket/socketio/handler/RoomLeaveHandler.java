@@ -19,6 +19,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+
+import io.netty.util.concurrent.EventExecutorGroup;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -37,6 +39,7 @@ import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 public class RoomLeaveHandler {
 
     private final SocketIOServer socketIOServer;
+    private final EventExecutorGroup socketBizExecutor;
     private final MessageRepository messageRepository;
     private final RoomRepository roomRepository;
     private final UserRepository userRepository;
@@ -45,37 +48,41 @@ public class RoomLeaveHandler {
     
     @OnEvent(LEAVE_ROOM)
     public void handleLeaveRoom(SocketIOClient client, String roomId) {
+        String userId = getUserId(client);
+        String userName = getUserName(client);
+
+        if (userId == null) {
+            client.sendEvent(ERROR, Map.of("message", "Unauthorized"));
+            return;
+        }
+
+        if (!userRooms.isInRoom(userId, roomId)) {
+            log.debug("User {} is not in room {}", userId, roomId);
+            return;
+        }
+
+        socketBizExecutor.submit(() ->  processRoomLeave(userId, userName, roomId, client));
+    }
+
+    private void processRoomLeave(String userId, String userName, String roomId, SocketIOClient client) {
         try {
-            String userId = getUserId(client);
-            String userName = getUserName(client);
-
-            if (userId == null) {
-                client.sendEvent(ERROR, Map.of("message", "Unauthorized"));
-                return;
-            }
-
-            if (!userRooms.isInRoom(userId, roomId)) {
-                log.debug("User {} is not in room {}", userId, roomId);
-                return;
-            }
-
             User user = userRepository.findById(userId).orElse(null);
             Room room = roomRepository.findById(roomId).orElse(null);
-            
+
             if (user == null || room == null) {
                 log.warn("Room {} not found or user {} has no access", roomId, userId);
                 return;
             }
-            
+
             roomRepository.removeParticipant(roomId, userId);
-            
+
             client.leaveRoom(roomId);
             userRooms.remove(userId, roomId);
-            
+
             log.info("User {} left room {}", userName, room.getName());
-            
+
             log.debug("Leave room cleanup - roomId: {}, userId: {}", roomId, userId);
-            
+
             sendSystemMessage(roomId, userName + "님이 퇴장하였습니다.");
             broadcastParticipantList(roomId);
             socketIOServer.getRoomOperations(roomId)
@@ -83,7 +90,7 @@ public class RoomLeaveHandler {
                             "userId", userId,
                             "userName", userName
                     ));
-            
+
         } catch (Exception e) {
             log.error("Error handling leaveRoom", e);
             client.sendEvent(ERROR, Map.of("message", "채팅방 퇴장 중 오류가 발생했습니다."));

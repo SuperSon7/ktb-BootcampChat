@@ -21,6 +21,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
+
+import io.netty.util.concurrent.EventExecutorGroup;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,6 +39,8 @@ import static org.mockito.Mockito.*;
 class ChatMessageHandlerTest {
 
     @Mock private SocketIOServer socketIOServer;
+    @Mock private EventExecutorGroup socketBizExecutor;
+    @Mock private EventExecutorGroup socketAuxExecutor;
     @Mock private MessageRepository messageRepository;
     @Mock private RoomRepository roomRepository;
     @Mock private UserRepository userRepository;
@@ -54,6 +58,8 @@ class ChatMessageHandlerTest {
         handler =
                 new ChatMessageHandler(
                         socketIOServer,
+                        socketBizExecutor,
+                        socketAuxExecutor,
                         messageRepository,
                         roomRepository,
                         userRepository,

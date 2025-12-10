@@ -9,6 +9,8 @@ import com.ktb.chatapp.model.Message;
 import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
 import java.util.Map;
+
+import io.netty.util.concurrent.EventExecutorGroup;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -27,17 +29,22 @@ import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 public class MessageReactionHandler {
     
     private final SocketIOServer socketIOServer;
+    private final EventExecutorGroup socketBizExecutor;
     private final MessageRepository messageRepository;
     
     @OnEvent(MESSAGE_REACTION)
     public void handleMessageReaction(SocketIOClient client, MessageReactionRequest data) {
-        try {
-            String userId = getUserId(client);
-            if (userId == null || userId.isBlank()) {
-                client.sendEvent(ERROR, Map.of("message", "Unauthorized"));
-                return;
-            }
+        String userId = getUserId(client);
+        if (userId == null || userId.isBlank()) {
+            client.sendEvent(ERROR, Map.of("message", "Unauthorized"));
+            return;
+        }
 
+        socketBizExecutor.submit(() -> processMessageReaction(client, data, userId));
+    }
+
+    private void processMessageReaction(SocketIOClient client, MessageReactionRequest data, String userId) {
+        try {
             Message message = messageRepository.findById(data.getMessageId()).orElse(null);
             if (message == null) {
                 client.sendEvent(ERROR, Map.of("message", "메시지를 찾을 수 없습니다."));
@@ -54,22 +61,22 @@ public class MessageReactionHandler {
             }
 
             log.debug("Message reaction processed - type: {}, reaction: {}, messageId: {}, userId: {}",
-                data.getType(), data.getReaction(), message.getId(), userId);
+                    data.getType(), data.getReaction(), message.getId(), userId);
 
             messageRepository.save(message);
 
             MessageReactionResponse response = new MessageReactionResponse(
-                message.getId(),
-                message.getReactions()
+                    message.getId(),
+                    message.getReactions()
             );
 
             socketIOServer.getRoomOperations(message.getRoomId())
-                .sendEvent(MESSAGE_REACTION_UPDATE, response);
+                    .sendEvent(MESSAGE_REACTION_UPDATE, response);
 
         } catch (Exception e) {
             log.error("Error handling messageReaction", e);
             client.sendEvent(ERROR, Map.of(
-                "message", "리액션 처리 중 오류가 발생했습니다."
+                    "message", "리액션 처리 중 오류가 발생했습니다."
             ));
         }
     }

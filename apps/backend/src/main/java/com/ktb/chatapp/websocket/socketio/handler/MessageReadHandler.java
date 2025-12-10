@@ -14,6 +14,8 @@ import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.MessageReadStatusService;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
 import java.util.Map;
+
+import io.netty.util.concurrent.EventExecutorGroup;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -32,6 +34,7 @@ import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 public class MessageReadHandler {
     
     private final SocketIOServer socketIOServer;
+    private final EventExecutorGroup socketBizExecutor;
     private final MessageReadStatusService messageReadStatusService;
     private final MessageRepository messageRepository;
     private final RoomRepository roomRepository;
@@ -39,20 +42,24 @@ public class MessageReadHandler {
     
     @OnEvent(MARK_MESSAGES_AS_READ)
     public void handleMarkAsRead(SocketIOClient client, MarkAsReadRequest data) {
-        try {
-            String userId = getUserId(client);
-            if (userId == null) {
-                client.sendEvent(ERROR, Map.of("message", "Unauthorized"));
-                return;
-            }
+        String userId = getUserId(client);
+        if (userId == null) {
+            client.sendEvent(ERROR, Map.of("message", "Unauthorized"));
+            return;
+        }
 
-            if (data == null || data.getMessageIds() == null || data.getMessageIds().isEmpty()) {
-                return;
-            }
-            
+        if (data == null || data.getMessageIds() == null || data.getMessageIds().isEmpty()) {
+            return;
+        }
+
+        socketBizExecutor.submit(() -> processMarkAsRead(userId, client, data));
+    }
+
+    private void processMarkAsRead(String userId, SocketIOClient client, MarkAsReadRequest data) {
+        try {
             String roomId = messageRepository.findById(data.getMessageIds().getFirst())
                     .map(Message::getRoomId).orElse(null);
-            
+
             if (roomId == null || roomId.isBlank()) {
                 client.sendEvent(ERROR, Map.of("message", "Invalid room"));
                 return;
@@ -69,7 +76,7 @@ public class MessageReadHandler {
                 client.sendEvent(ERROR, Map.of("message", "Room access denied"));
                 return;
             }
-            
+
             messageReadStatusService.updateReadStatus(data.getMessageIds(), userId);
 
             MessagesReadResponse response = new MessagesReadResponse(userId, data.getMessageIds());

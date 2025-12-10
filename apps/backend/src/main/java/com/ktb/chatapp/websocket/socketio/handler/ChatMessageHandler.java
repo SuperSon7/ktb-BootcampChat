@@ -26,6 +26,8 @@ import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
+
+import io.netty.util.concurrent.EventExecutorGroup;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -39,6 +41,8 @@ import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 @RequiredArgsConstructor
 public class ChatMessageHandler {
     private final SocketIOServer socketIOServer;
+    private final EventExecutorGroup socketBizExecutor;
+    private final EventExecutorGroup socketAuxExecutor;
     private final MessageRepository messageRepository;
     private final RoomRepository roomRepository;
     private final UserRepository userRepository;
@@ -90,6 +94,7 @@ public class ChatMessageHandler {
         // Rate limit check
         RateLimitCheckResult rateLimitResult =
                 rateLimitService.checkRateLimit(socketUser.id(), 10000, Duration.ofMinutes(1));
+
         if (!rateLimitResult.allowed()) {
             recordError("rate_limit_exceeded");
             Counter.builder("socketio.messages.rate_limit")
@@ -106,35 +111,48 @@ public class ChatMessageHandler {
             timerSample.stop(createTimer("error", "rate_limit"));
             return;
         }
-        
+
+        socketBizExecutor.submit(() ->
+                persistChatMessage(client, data, socketUser)
+        );
+    }
+
+    private void persistChatMessage(
+            SocketIOClient client,
+            ChatMessageRequest data,
+            SocketUser socketUser
+    ) {
+        Timer.Sample timerSample = Timer.start(meterRegistry);
+
+        String roomId = data.getRoom();
+        MessageContent messageContent = data.getParsedContent();
+        String messageType = data.getMessageType();
+
         try {
             User sender = userRepository.findById(socketUser.id()).orElse(null);
             if (sender == null) {
                 recordError("user_not_found");
                 client.sendEvent(ERROR, Map.of(
-                    "code", "MESSAGE_ERROR",
-                    "message", "User not found"
+                        "code", "MESSAGE_ERROR",
+                        "message", "User not found"
                 ));
                 timerSample.stop(createTimer("error", "user_not_found"));
                 return;
             }
 
-            String roomId = data.getRoom();
             Room room = roomRepository.findById(roomId).orElse(null);
             if (room == null || !room.getParticipantIds().contains(socketUser.id())) {
                 recordError("room_access_denied");
                 client.sendEvent(ERROR, Map.of(
-                    "code", "MESSAGE_ERROR",
-                    "message", "채팅방 접근 권한이 없습니다."
+                        "code", "MESSAGE_ERROR",
+                        "message", "채팅방 접근 권한이 없습니다."
                 ));
                 timerSample.stop(createTimer("error", "room_access_denied"));
                 return;
             }
 
-            MessageContent messageContent = data.getParsedContent();
-
             log.debug("Message received - type: {}, room: {}, userId: {}, hasFileData: {}",
-                data.getMessageType(), roomId, socketUser.id(), data.hasFileData());
+                    data.getMessageType(), roomId, socketUser.id(), data.hasFileData());
 
             if (bannedWordChecker.containsBannedWord(messageContent.getTrimmedContent())) {
                 recordError("banned_word");
@@ -146,7 +164,6 @@ public class ChatMessageHandler {
                 return;
             }
 
-            String messageType = data.getMessageType();
             Message message = switch (messageType) {
                 case "file" -> handleFileMessage(roomId, socketUser.id(), messageContent, data.getFileData());
                 case "text" -> handleTextMessage(roomId, socketUser.id(), messageContent);
@@ -164,27 +181,25 @@ public class ChatMessageHandler {
             socketIOServer.getRoomOperations(roomId)
                     .sendEvent(MESSAGE, createMessageResponse(savedMessage, sender));
 
-            // AI 멘션 처리
-            aiService.handleAIMentions(roomId, socketUser.id(), messageContent);
-
-            sessionService.updateLastActivity(socketUser.id());
-
-            // Record success metrics
-            recordMessageSuccess(messageType);
-            timerSample.stop(createTimer("success", messageType));
-
             log.debug("Message processed - messageId: {}, type: {}, room: {}",
-                savedMessage.getId(), savedMessage.getType(), roomId);
+                    savedMessage.getId(), savedMessage.getType(), roomId);
 
         } catch (Exception e) {
             recordError("exception");
             log.error("Message handling error", e);
             client.sendEvent(ERROR, Map.of(
-                "code", "MESSAGE_ERROR",
-                "message", e.getMessage() != null ? e.getMessage() : "메시지 전송 중 오류가 발생했습니다."
+                    "code", "MESSAGE_ERROR",
+                    "message", e.getMessage() != null ? e.getMessage() : "메시지 전송 중 오류가 발생했습니다."
             ));
             timerSample.stop(createTimer("error", "exception"));
         }
+
+        socketAuxExecutor.submit(() -> aiService.handleAIMentions(roomId, socketUser.id(), messageContent));
+        socketAuxExecutor.submit(() -> sessionService.updateLastActivity(socketUser.id()));
+
+        // Record success metrics
+        recordMessageSuccess(messageType);
+        timerSample.stop(createTimer("success", messageType));
     }
 
     private Message handleFileMessage(String roomId, String userId, MessageContent messageContent, Map<String, Object> fileData) {

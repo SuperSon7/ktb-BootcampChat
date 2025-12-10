@@ -17,6 +17,8 @@ import com.ktb.chatapp.websocket.socketio.SocketUser;
 import com.ktb.chatapp.websocket.socketio.UserRooms;
 import java.time.LocalDateTime;
 import java.util.*;
+
+import io.netty.util.concurrent.EventExecutorGroup;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -35,6 +37,8 @@ import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 public class RoomJoinHandler {
 
     private final SocketIOServer socketIOServer;
+    private final EventExecutorGroup socketBizExecutor;
+    private final EventExecutorGroup socketAuxExecutor;
     private final MessageRepository messageRepository;
     private final RoomRepository roomRepository;
     private final UserRepository userRepository;
@@ -45,30 +49,34 @@ public class RoomJoinHandler {
     
     @OnEvent(JOIN_ROOM)
     public void handleJoinRoom(SocketIOClient client, String roomId) {
-        try {
-            String userId = getUserId(client);
-            String userName = getUserName(client);
+        String userId = getUserId(client);
+        String userName = getUserName(client);
 
-            if (userId == null) {
-                client.sendEvent(JOIN_ROOM_ERROR, Map.of("message", "Unauthorized"));
-                return;
-            }
-            
+        if (userId == null) {
+            client.sendEvent(JOIN_ROOM_ERROR, Map.of("message", "Unauthorized"));
+            return;
+        }
+
+        // 이미 해당 방에 참여 중인지 확인
+        if (userRooms.isInRoom(userId, roomId)) {
+            log.debug("User {} already in room {}", userId, roomId);
+            client.joinRoom(roomId);
+            client.sendEvent(JOIN_ROOM_SUCCESS, Map.of("roomId", roomId));
+            return;
+        }
+        
+        socketBizExecutor.submit(() -> proccessJoinRoom(userId, userName, client, roomId));
+    }
+    
+    private void proccessJoinRoom(String userId, String userName, SocketIOClient client, String roomId) {
+        try {
             if (userRepository.findById(userId).isEmpty()) {
                 client.sendEvent(JOIN_ROOM_ERROR, Map.of("message", "User not found"));
                 return;
             }
-            
+
             if (roomRepository.findById(roomId).isEmpty()) {
                 client.sendEvent(JOIN_ROOM_ERROR, Map.of("message", "채팅방을 찾을 수 없습니다."));
-                return;
-            }
-            
-            // 이미 해당 방에 참여 중인지 확인
-            if (userRooms.isInRoom(userId, roomId)) {
-                log.debug("User {} already in room {}", userId, roomId);
-                client.joinRoom(roomId);
-                client.sendEvent(JOIN_ROOM_SUCCESS, Map.of("roomId", roomId));
                 return;
             }
 
@@ -80,16 +88,16 @@ public class RoomJoinHandler {
             userRooms.add(userId, roomId);
 
             Message joinMessage = Message.builder()
-                .roomId(roomId)
-                .content(userName + "님이 입장하였습니다.")
-                .type(MessageType.system)
-                .timestamp(LocalDateTime.now())
-                .mentions(new ArrayList<>())
-                .isDeleted(false)
-                .reactions(new HashMap<>())
-                .readers(new ArrayList<>())
-                .metadata(new HashMap<>())
-                .build();
+                    .roomId(roomId)
+                    .content(userName + "님이 입장하였습니다.")
+                    .type(MessageType.system)
+                    .timestamp(LocalDateTime.now())
+                    .mentions(new ArrayList<>())
+                    .isDeleted(false)
+                    .reactions(new HashMap<>())
+                    .readers(new ArrayList<>())
+                    .metadata(new HashMap<>())
+                    .build();
 
             joinMessage = messageRepository.save(joinMessage);
 
@@ -112,32 +120,34 @@ public class RoomJoinHandler {
                     .map(Optional::get)
                     .map(UserResponse::from)
                     .toList();
-            
+
             JoinRoomSuccessResponse response = JoinRoomSuccessResponse.builder()
-                .roomId(roomId)
-                .participants(participants)
-                .messages(messageLoadResult.getMessages())
-                .hasMore(messageLoadResult.isHasMore())
-                .activeStreams(Collections.emptyList())
-                .build();
+                    .roomId(roomId)
+                    .participants(participants)
+                    .messages(messageLoadResult.getMessages())
+                    .hasMore(messageLoadResult.isHasMore())
+                    .activeStreams(Collections.emptyList())
+                    .build();
 
             client.sendEvent(JOIN_ROOM_SUCCESS, response);
 
             // 입장 메시지 브로드캐스트
             socketIOServer.getRoomOperations(roomId)
-                .sendEvent(MESSAGE, messageResponseMapper.mapToMessageResponse(joinMessage, null));
+                    .sendEvent(MESSAGE, messageResponseMapper.mapToMessageResponse(joinMessage, null));
 
             // 참가자 목록 업데이트 브로드캐스트
-            socketIOServer.getRoomOperations(roomId)
-                .sendEvent(PARTICIPANTS_UPDATE, participants);
+            socketAuxExecutor.submit(() -> {
+                socketIOServer.getRoomOperations(roomId)
+                        .sendEvent(PARTICIPANTS_UPDATE, participants);
 
-            log.info("User {} joined room {} successfully. Message count: {}, hasMore: {}",
-                userName, roomId, messageLoadResult.getMessages().size(), messageLoadResult.isHasMore());
+                log.info("User {} joined room {} successfully. Message count: {}, hasMore: {}",
+                        userName, roomId, messageLoadResult.getMessages().size(), messageLoadResult.isHasMore());
+            });
 
         } catch (Exception e) {
             log.error("Error handling joinRoom", e);
             client.sendEvent(JOIN_ROOM_ERROR, Map.of(
-                "message", e.getMessage() != null ? e.getMessage() : "채팅방 입장에 실패했습니다."
+                    "message", e.getMessage() != null ? e.getMessage() : "채팅방 입장에 실패했습니다."
             ));
         }
     }

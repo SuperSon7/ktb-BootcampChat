@@ -10,7 +10,10 @@ import com.corundumstudio.socketio.store.MemoryStoreFactory;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.ktb.chatapp.websocket.socketio.ChatDataStore;
 import com.ktb.chatapp.websocket.socketio.LocalChatDataStore;
+import io.netty.util.concurrent.DefaultEventExecutorGroup;
+import io.netty.util.concurrent.EventExecutorGroup;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -63,7 +66,25 @@ public class SocketIOConfig {
         
         return socketIOServer;
     }
-    
+
+    @Bean
+    @Qualifier("socketBizExecutor")
+    public EventExecutorGroup socketBizExecutor(
+            @Value("${socketio.biz-threads:2}") int bizThreads
+    ) {
+        log.info("Initializing SocketIO Business Executor with {} threads", bizThreads);
+        return new DefaultEventExecutorGroup(bizThreads);
+    }
+
+    @Bean
+    @Qualifier("socketAuxExecutor")
+    public EventExecutorGroup socketAuxExecutor(
+            @Value("${socketio.biz-threads:1}") int auxThreads
+    ) {
+        log.info("Initializing SocketIO Auxiliary Executor with {} threads", auxThreads);
+        return new DefaultEventExecutorGroup(auxThreads);
+    }
+
     /**
      * SpringAnnotationScanner는 BeanPostProcessor로서
      * ApplicationContext 초기화 초기에 등록되고,

@@ -8,6 +8,8 @@ import com.ktb.chatapp.model.Room;
 import com.ktb.chatapp.repository.RoomRepository;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
 import java.util.Map;
+
+import io.netty.util.concurrent.EventExecutorGroup;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -25,6 +27,7 @@ import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 @RequiredArgsConstructor
 public class MessageFetchHandler {
 
+    private final EventExecutorGroup socketBizExecutor;
     private final RoomRepository roomRepository;
     private final MessageLoader messageLoader;
 
@@ -40,6 +43,10 @@ public class MessageFetchHandler {
             return;
         }
         
+        socketBizExecutor.submit(() -> fetchMessages(userId, client, data));
+    }
+
+    private void fetchMessages(String userId, SocketIOClient client, FetchMessagesRequest data) {
         try {
             // 권한 체크
             Room room = roomRepository.findById(data.roomId()).orElse(null);
@@ -58,11 +65,11 @@ public class MessageFetchHandler {
 
             log.debug("Loading messages for room {}", data.roomId());
             FetchMessagesResponse result = messageLoader.loadMessages(data, userId);
-            
+
             log.debug("Previous messages loaded - room: {}, count: {}, hasMore: {}",
                     data.roomId(), result.getMessages().size(),
                     result.isHasMore());
-            
+
             client.sendEvent(PREVIOUS_MESSAGES_LOADED, result);
 
         } catch (Exception e) {
