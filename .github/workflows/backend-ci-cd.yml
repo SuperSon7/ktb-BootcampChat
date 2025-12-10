@@ -82,7 +82,7 @@ jobs:
               "Name=tag:Env,Values=prod" \
               "Name=tag:AutoDeploy,Values=true" \
               "Name=instance-state-name,Values=running" \
-            --query "Reservations[].Instances[].PrivateIpAddress" \
+            --query "Reservations[].Instances[].PublicIpAddress" \
             --output text)
 
           echo "Backend IPs: $IPS"
