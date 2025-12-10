@@ -137,6 +137,7 @@ function NewChatRoom() {
               </Text>
               <TextInput
                 id="room-name"
+                data-testid="chat-room-name-input"
                 size="lg"
                 placeholder="채팅방 이름을 입력하세요"
                 defaultValue=""
@@ -181,7 +182,12 @@ function NewChatRoom() {
             </Field.Root>
           )}
 
-          <Button type="submit" size="lg" disabled={loading}>
+          <Button
+            type="submit"
+            size="lg"
+            disabled={loading}
+            data-testid="create-chat-room-button"
+          >
             {loading ? "생성 중..." : "채팅방 만들기"}
           </Button>
         </VStack>
