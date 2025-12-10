@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/router';
-import { ErrorCircleIcon } from '@vapor-ui/icons';
+import React, { useState, useRef } from "react";
+import { useRouter } from "next/router";
+import { ErrorCircleIcon } from "@vapor-ui/icons";
 import {
   Box,
   Button,
@@ -11,94 +11,90 @@ import {
   Text,
   TextInput,
   VStack,
-  Callout
-} from '@vapor-ui/core';
-import { useAuth } from '@/contexts/AuthContext';
+  Callout,
+} from "@vapor-ui/core";
+import { useAuth } from "@/contexts/AuthContext";
 
 function NewChatRoom() {
   const router = useRouter();
   const { user: currentUser } = useAuth();
-  const [formData, setFormData] = useState({
-    name: '',
-    hasPassword: false,
-    password: ''
-  });
+
+  /** ⭐ 입력 값은 ref로 관리 → 입력 시 리렌더링 없음 */
+  const nameRef = useRef("");
+  const passwordRef = useRef("");
+
+  /** 렌더링이 필요한 최소 상태들만 state로 유지 */
+  const [hasPassword, setHasPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
 
   const joinRoom = async (roomId, password) => {
-    try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/rooms/${roomId}/join`, {
-        method: 'POST',
+    const response = await fetch(
+      `${process.env.NEXT_PUBLIC_API_URL}/api/rooms/${roomId}/join`,
+      {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          'x-auth-token': currentUser.token,
-          'x-session-id': currentUser.sessionId
+          "Content-Type": "application/json",
+          "x-auth-token": currentUser.token,
+          "x-session-id": currentUser.sessionId,
         },
-        body: JSON.stringify({ password })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || '채팅방 입장에 실패했습니다.');
+        body: JSON.stringify({ password }),
       }
+    );
 
-      router.push(`/chat/${roomId}`);
-    } catch (error) {
-      console.error('Room join error:', error);
-      throw error;
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message);
     }
+
+    router.push(`/chat/${roomId}`);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!formData.name.trim()) {
-      setError('채팅방 이름을 입력해주세요.');
+    const nameValue = nameRef.current.trim();
+    const passwordValue = hasPassword ? passwordRef.current : undefined;
+
+    if (!nameValue) {
+      setError("채팅방 이름을 입력해주세요.");
       return;
     }
 
-    if (formData.hasPassword && !formData.password) {
-      setError('비밀번호를 입력해주세요.');
-      return;
-    }
-
-    if (!currentUser?.token) {
-      setError('인증 정보가 없습니다. 다시 로그인해주세요.');
+    if (hasPassword && !passwordValue) {
+      setError("비밀번호를 입력해주세요.");
       return;
     }
 
     try {
       setLoading(true);
-      setError('');
+      setError("");
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/rooms`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-auth-token': currentUser.token,
-          'x-session-id': currentUser.sessionId
-        },
-        body: JSON.stringify({
-          name: formData.name.trim(),
-          password: formData.hasPassword ? formData.password : undefined
-        })
-      });
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/rooms`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-auth-token": currentUser.token,
+            "x-session-id": currentUser.sessionId,
+          },
+          body: JSON.stringify({
+            name: nameValue,
+            password: passwordValue,
+          }),
+        }
+      );
 
       if (!response.ok) {
         const errorData = await response.json();
-        if (response.status === 401) {
-          throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
-        }
-        throw new Error(errorData.message || '채팅방 생성에 실패했습니다.');
+        throw new Error(errorData.message);
       }
 
       const { data } = await response.json();
-      await joinRoom(data._id, formData.hasPassword ? formData.password : undefined);
-
-    } catch (error) {
-      console.error('Room creation/join error:', error);
-      setError(error.message);
+      await joinRoom(data._id, passwordValue);
+    } catch (err) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -133,6 +129,7 @@ function NewChatRoom() {
         )}
 
         <VStack gap="$300" width="100%">
+          {/* 🔹 입력 값이 state가 아니라 ref → 리렌더링 없음 */}
           <Field.Root>
             <Box render={<Field.Label />} flexDirection="column">
               <Text typography="subtitle2" foreground="normal-200">
@@ -140,35 +137,33 @@ function NewChatRoom() {
               </Text>
               <TextInput
                 id="room-name"
-                required
+                data-testid="chat-room-name-input"
                 size="lg"
                 placeholder="채팅방 이름을 입력하세요"
-                value={formData.name}
-                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                defaultValue=""
+                onChange={(e) => (nameRef.current = e.target.value)}
                 disabled={loading}
-                data-testid="chat-room-name-input"
               />
             </Box>
-            <Field.Error match="valueMissing">채팅방 이름을 입력해주세요.</Field.Error>
           </Field.Root>
 
           <Field.Root>
-            <HStack width="100%" justifyContent="space-between" render={<Field.Label />}>
+            <HStack
+              width="100%"
+              justifyContent="space-between"
+              render={<Field.Label />}
+            >
               비밀번호 설정
               <Switch.Root
                 id="room-password-toggle"
-                checked={formData.hasPassword}
-                onCheckedChange={(checked) => setFormData(prev => ({
-                  ...prev,
-                  hasPassword: checked,
-                  password: checked ? prev.password : ''
-                }))}
+                checked={hasPassword}
+                onCheckedChange={setHasPassword}
                 disabled={loading}
               />
             </HStack>
           </Field.Root>
 
-          {formData.hasPassword && (
+          {hasPassword && (
             <Field.Root>
               <Box render={<Field.Label />} flexDirection="column">
                 <Text typography="subtitle2" foreground="normal-200">
@@ -179,8 +174,8 @@ function NewChatRoom() {
                   type="password"
                   size="lg"
                   placeholder="비밀번호를 입력하세요"
-                  value={formData.password}
-                  onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
+                  defaultValue=""
+                  onChange={(e) => (passwordRef.current = e.target.value)}
                   disabled={loading}
                 />
               </Box>
@@ -190,10 +185,10 @@ function NewChatRoom() {
           <Button
             type="submit"
             size="lg"
-            disabled={loading || !formData.name.trim() || (formData.hasPassword && !formData.password)}
+            disabled={loading}
             data-testid="create-chat-room-button"
           >
-            {loading ? '생성 중...' : '채팅방 만들기'}
+            {loading ? "생성 중..." : "채팅방 만들기"}
           </Button>
         </VStack>
       </VStack>
