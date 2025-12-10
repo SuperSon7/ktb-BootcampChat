@@ -6,13 +6,14 @@ import React, {
   forwardRef,
   memo,
 } from "react";
+
 import { LikeIcon, AttachFileOutlineIcon, SendIcon } from "@vapor-ui/icons";
 import { IconButton, VStack, HStack, Box, Textarea } from "@vapor-ui/core";
+
 import EmojiPicker from "./EmojiPicker";
 import MentionDropdown from "./MentionDropdown";
 import FilePreview from "./FilePreview";
 import fileService from "@/services/fileService";
-import { useDebounce } from "@/hooks/useDebouce";
 
 const ChatInput = forwardRef(
   (
@@ -27,8 +28,14 @@ const ChatInput = forwardRef(
     },
     ref
   ) => {
+    /** -----------------------------
+     * 기본 Ref & 상태
+     ------------------------------*/
     const messageInputRef = ref || useRef(null);
+    const rawMessageRef = useRef(""); // 입력값 ref
+
     const submitLockRef = useRef(false);
+
     const lastSubmitRef = useRef({
       type: null,
       content: null,
@@ -36,24 +43,23 @@ const ChatInput = forwardRef(
       time: 0,
     });
 
-    // 최소 렌더링 state
-    const [rawMessage, setRawMessage] = useState("");
-    const debouncedMessage = useDebounce(rawMessage, 120);
+    /** 파일 입력 Ref */
+    const fileInputInternalRef = useRef(null);
+    const fileInputElRef = fileInputRef || fileInputInternalRef;
 
-    // 파일 UI state
+    /** 파일 UI 상태 */
     const [files, setFiles] = useState([]);
     const [uploading, setUploading] = useState(false);
-    const [uploadProgress, setUploadProgress] = useState(0);
     const [uploadError, setUploadError] = useState(null);
 
-    // 멘션 & 이모지 UI state
+    /** 멘션 상태 */
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [showMentionList, setShowMentionList] = useState(false);
-    const [mentionFilter, setMentionFilter] = useState("");
-    const debouncedMention = useDebounce(mentionFilter, 120);
     const [mentionIndex, setMentionIndex] = useState(0);
     const [mentionPosition, setMentionPosition] = useState({ top: 0, left: 0 });
+    const mentionFilterRef = useRef("");
 
+    /** 안정적으로 유지해야 하는 함수 Ref */
     const onSubmitRef = useRef(onSubmit);
     const getFilteredRef = useRef(getFilteredParticipants);
 
@@ -65,13 +71,16 @@ const ChatInput = forwardRef(
       getFilteredRef.current = getFilteredParticipants;
     }, [getFilteredParticipants]);
 
-    // 파일 처리
+    /** ---------------------------------
+     *  파일 미리보기 + 검증
+     ----------------------------------*/
     const handleFileValidationAndPreview = useCallback(
       async (file) => {
         if (!file) return;
 
         try {
           await fileService.validateFile(file);
+
           const preview = {
             file,
             url: URL.createObjectURL(file),
@@ -84,31 +93,42 @@ const ChatInput = forwardRef(
         } catch (err) {
           setUploadError(err.message);
         } finally {
-          if (fileInputRef?.current) fileInputRef.current.value = "";
+          if (fileInputElRef.current) {
+            fileInputElRef.current.value = "";
+          }
         }
       },
-      [onFileSelect, fileInputRef]
+      [onFileSelect, fileInputElRef]
     );
 
-    // 메시지 제출
+    const handleFileInputChange = useCallback(
+      async (e) => {
+        const file = e.target.files?.[0];
+        await handleFileValidationAndPreview(file);
+      },
+      [handleFileValidationAndPreview]
+    );
+
+    /** ---------------------------------
+     * 메시지 전송
+     ----------------------------------*/
     const handleSubmit = useCallback(async () => {
       if (submitLockRef.current) return;
-
       submitLockRef.current = true;
 
       const submit = onSubmitRef.current;
-      const textValue = messageInputRef.current?.value || "";
-      const text = textValue.trim();
+      const text = (messageInputRef.current?.value || "").trim();
+      const now = Date.now();
 
       try {
-        const now = Date.now();
-
+        /** FILE 메시지 */
         if (files.length > 0) {
-          const duplicateFile =
+          const duplicate =
             lastSubmitRef.current.type === "file" &&
             lastSubmitRef.current.fileName === files[0]?.name &&
             now - lastSubmitRef.current.time < 700;
-          if (duplicateFile) return;
+
+          if (duplicate) return;
 
           lastSubmitRef.current = {
             type: "file",
@@ -123,18 +143,20 @@ const ChatInput = forwardRef(
             fileData: files[0],
           });
 
-          if (messageInputRef.current) messageInputRef.current.value = "";
-          setRawMessage("");
+          messageInputRef.current.value = "";
+          rawMessageRef.current = "";
           setFiles([]);
           return;
         }
 
+        /** TEXT 메시지 */
         if (text) {
-          const duplicateText =
+          const duplicate =
             lastSubmitRef.current.type === "text" &&
             lastSubmitRef.current.content === text &&
             now - lastSubmitRef.current.time < 700;
-          if (duplicateText) return;
+
+          if (duplicate) return;
 
           lastSubmitRef.current = {
             type: "text",
@@ -145,78 +167,84 @@ const ChatInput = forwardRef(
 
           await submit({ type: "text", content: text });
 
-          if (messageInputRef.current) messageInputRef.current.value = "";
-          setRawMessage("");
+          messageInputRef.current.value = "";
+          rawMessageRef.current = "";
         }
       } finally {
         submitLockRef.current = false;
       }
     }, [files]);
 
-    // 입력 변경 핸들러
-    const handleInputChange = useCallback((e) => {
-      const value = e.target.value;
-      setRawMessage(value);
-
-      const cursor = e.target.selectionStart;
-      const before = value.slice(0, cursor);
-      const lastAt = before.lastIndexOf("@");
-
-      if (lastAt !== -1) {
-        const filter = before.slice(lastAt + 1);
-
-        if (!filter.includes(" ")) {
-          setMentionFilter(filter.toLowerCase());
-          setShowMentionList(true);
-          setMentionIndex(0);
-
-          const pos = calculateMentionPosition(e.target, lastAt);
-          setMentionPosition(pos);
-          return;
-        }
-      }
-
-      setShowMentionList(false);
-    }, []);
-
-    // 멘션 후보 필터링
-    const filteredParticipants = getFilteredRef.current(room)?.filter((u) => {
-      return (
-        u.name.toLowerCase().includes(debouncedMention) ||
-        u.email.toLowerCase().includes(debouncedMention)
-      );
-    });
-
-    // 멘션 위치 계산
+    /** ---------------------------------
+     * INPUT CHANGE (렌더링 없음)
+     ----------------------------------*/
     const calculateMentionPosition = useCallback((textarea, index) => {
       const before = textarea.value.slice(0, index);
       const lines = before.split("\n");
-      const lineIndex = lines.length - 1;
+      const line = lines[lines.length - 1];
 
       const measure = document.createElement("div");
       measure.style.visibility = "hidden";
       measure.style.position = "absolute";
       measure.style.whiteSpace = "pre";
       measure.style.font = window.getComputedStyle(textarea).font;
-      measure.textContent = lines[lineIndex];
+      measure.textContent = line;
+
       document.body.appendChild(measure);
       const width = measure.offsetWidth;
       document.body.removeChild(measure);
 
       const rect = textarea.getBoundingClientRect();
-      const style = window.getComputedStyle(textarea);
+      const padLeft = parseInt(window.getComputedStyle(textarea).paddingLeft);
+      const padTop = parseInt(window.getComputedStyle(textarea).paddingTop);
+      const lineHeight = parseInt(window.getComputedStyle(textarea).lineHeight);
 
       return {
-        left: rect.left + parseInt(style.paddingLeft) + width,
-        top:
-          rect.top +
-          parseInt(style.paddingTop) +
-          lineIndex * (parseInt(style.lineHeight) || 20) +
-          35,
+        left: rect.left + padLeft + width,
+        top: rect.top + padTop + lineHeight * (lines.length - 1) + 35,
       };
     }, []);
 
-    // 🔥 멘션 선택 기능 추가
+    const handleInputChange = useCallback(
+      (e) => {
+        const value = e.target.value;
+        rawMessageRef.current = value;
+
+        const cursor = e.target.selectionStart;
+        const before = value.slice(0, cursor);
+        const lastAt = before.lastIndexOf("@");
+
+        if (lastAt !== -1) {
+          const filter = before.slice(lastAt + 1);
+
+          if (!filter.includes(" ")) {
+            mentionFilterRef.current = filter.toLowerCase();
+            setShowMentionList(true);
+            setMentionIndex(0);
+
+            setMentionPosition(calculateMentionPosition(e.target, lastAt));
+            return;
+          }
+        }
+
+        setShowMentionList(false);
+      },
+      [calculateMentionPosition]
+    );
+
+    /** ---------------------------------
+     * MENTION 필터링 (디바운스 없음)
+     ----------------------------------*/
+    const filteredParticipants = getFilteredRef.current(room)?.filter((u) => {
+      const f = mentionFilterRef.current;
+      return (
+        u.name.toLowerCase().includes(f) || u.email.toLowerCase().includes(f)
+      );
+    });
+
+    /** ---------------------------------
+     * MENTION SELECT
+     ----------------------------------*/
     const handleMentionSelect = useCallback((user) => {
       const input = messageInputRef.current;
       if (!input) return;
@@ -228,7 +256,6 @@ const ChatInput = forwardRef(
       const after = value.slice(cursor);
 
       const lastAt = before.lastIndexOf("@");
-
       if (lastAt === -1) return;
 
       const mentionText = `@${user.name} `;
@@ -236,43 +263,38 @@ const ChatInput = forwardRef(
 
       input.value = newValue;
 
+      /** 커서 위치 변경 */
       const pos = lastAt + mentionText.length;
       input.selectionStart = pos;
       input.selectionEnd = pos;
 
-      setRawMessage(newValue);
+      rawMessageRef.current = newValue;
       setShowMentionList(false);
     }, []);
 
-    // 🔥 Enter / 멘션 / Shift+Enter 처리
+    /** ---------------------------------
+     * KEY DOWN
+     ----------------------------------*/
     const handleKeyDown = useCallback(
       (e) => {
-        if (e.nativeEvent?.isComposing || e.isComposing) {
-          return;
-        }
+        if (e.nativeEvent?.isComposing || e.isComposing) return;
 
         const list = filteredParticipants || [];
 
-        // 멘션 리스트 열린 상태
         if (showMentionList) {
           switch (e.key) {
             case "ArrowDown":
               e.preventDefault();
-              setMentionIndex((prev) => (prev + 1) % list.length);
+              setMentionIndex((i) => (i + 1) % list.length);
               return;
 
             case "ArrowUp":
               e.preventDefault();
-              setMentionIndex((prev) => (prev - 1 + list.length) % list.length);
+              setMentionIndex((i) => (i - 1 + list.length) % list.length);
               return;
 
             case "Enter":
               e.preventDefault();
-
-              // 🔥 멘션 리스트 닫고 정상 입력 모드로 전환
-              setShowMentionList(false);
-
-              // 🔥 메시지 전송
               handleSubmit();
               return;
 
@@ -283,7 +305,6 @@ const ChatInput = forwardRef(
           }
         }
 
-        // 🔥 일반 입력 모드에서 Enter → 메시지 전송
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           handleSubmit();
@@ -292,7 +313,9 @@ const ChatInput = forwardRef(
       [showMentionList, filteredParticipants, handleSubmit]
     );
 
-    // 이모지 선택
+    /** ---------------------------------
+     * EMOJI SELECT
+     ----------------------------------*/
     const handleEmojiSelect = useCallback((emoji) => {
       const input = messageInputRef.current;
       if (!input) return;
@@ -307,12 +330,22 @@ const ChatInput = forwardRef(
       input.selectionStart = cursor + emoji.native.length;
       input.selectionEnd = cursor + emoji.native.length;
 
-      setRawMessage(updated);
+      rawMessageRef.current = updated;
       setShowEmojiPicker(false);
     }, []);
 
-    const isDisabled = disabled || uploading || externalUploading;
+    /** ---------------------------------
+     * SEND DISABLED (디바운스 아님)
+     ----------------------------------*/
+    const isDisabledSend =
+      disabled ||
+      uploading ||
+      externalUploading ||
+      (!rawMessageRef.current.trim() && files.length === 0);
 
+    /** ---------------------------------
+     * RENDER
+     ----------------------------------*/
     return (
       <>
         <Box className="relative" padding="$200 $400">
@@ -321,7 +354,6 @@ const ChatInput = forwardRef(
               <FilePreview
                 files={files}
                 uploading={uploading}
-                uploadProgress={uploadProgress}
                 uploadError={uploadError}
                 onRemove={(f) =>
                   setFiles((prev) => prev.filter((p) => p.name !== f.name))
@@ -332,22 +364,20 @@ const ChatInput = forwardRef(
 
           <VStack width="100%">
             <HStack>
-              {/* 🔥 onKeyDownCapture 로 Enter 정상 처리 */}
               <Textarea
                 ref={messageInputRef}
                 onChange={handleInputChange}
                 onKeyDownCapture={handleKeyDown}
-                disabled={isDisabled}
+                disabled={disabled}
                 rows={1}
                 autoResize
-                placeholder="메시지를 입력하세요…"
+                plac
+                eholder="메시지를 입력하세요…"
               />
 
               <IconButton
                 size="xl"
-                disabled={
-                  isDisabled || (!debouncedMessage.trim() && files.length === 0)
-                }
+                disabled={isDisabledSend}
                 onClick={handleSubmit}
               >
                 <SendIcon />
@@ -359,7 +389,7 @@ const ChatInput = forwardRef(
                 variant="ghost"
                 size="md"
                 onClick={() => setShowEmojiPicker((v) => !v)}
-                disabled={isDisabled}
+                disabled={disabled}
               >
                 <LikeIcon />
               </IconButton>
@@ -367,11 +397,19 @@ const ChatInput = forwardRef(
               <IconButton
                 variant="ghost"
                 size="md"
-                onClick={() => fileInputRef?.current?.click()}
-                disabled={isDisabled}
+                onClick={() => fileInputElRef.current?.click()}
+                disabled={disabled}
               >
                 <AttachFileOutlineIcon />
               </IconButton>
+
+              <input
+                ref={fileInputElRef}
+                type="file"
+                className="hidden"
+                onChange={handleFileInputChange}
+                disabled={disabled}
+              />
             </HStack>
 
             {showEmojiPicker && (
@@ -389,7 +427,10 @@ const ChatInput = forwardRef(
         {showMentionList && (
           <Box
             className="fixed z-9999"
-            style={{ top: mentionPosition.top, left: mentionPosition.left }}
+            style={{
+              top: mentionPosition.top,
+              left: mentionPosition.left,
+            }}
           >
             <MentionDropdown
               participants={filteredParticipants}
