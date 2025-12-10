@@ -126,5 +126,5 @@ jobs:
             fi
             sleep 5
           done
-          echo "Frontend health check failed ❌"
+          echo "Frontend health check failed! ❌"
           exit 1
