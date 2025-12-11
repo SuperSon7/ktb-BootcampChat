@@ -20,11 +20,11 @@ deploy:
 			-e "ssh -o StrictHostKeyChecking=no" \
 			.next/standalone/ ubuntu@$$server:$(DEPLOY_PATH)/; \
 		echo "  📁 Copying static files..."; \
-		rsync -avz --delete \
+		rsync -avz \
 			-e "ssh -o StrictHostKeyChecking=no" \
 			.next/static ubuntu@$$server:$(DEPLOY_PATH)/.next/; \
 		echo "  📁 Copying public files..."; \
-		rsync -avz --delete \
+		rsync -avz \
 			-e "ssh -o StrictHostKeyChecking=no" \
 			public ubuntu@$$server:$(DEPLOY_PATH)/; \
 		echo "  📁 Copying restart script..."; \
