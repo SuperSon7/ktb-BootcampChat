@@ -38,6 +38,13 @@ jobs:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
           NEXT_PUBLIC_SOCKET_URL: ${{ secrets.NEXT_PUBLIC_SOCKET_URL }}
 
+      - name: Debug .next contents
+        run: |
+          echo "PWD: $(pwd)"
+          ls -R .
+          echo "---- .next ----"
+          ls -R .next || echo ".next not found"
+
       - name: Upload frontend build artifact
         uses: actions/upload-artifact@v4
         with:
