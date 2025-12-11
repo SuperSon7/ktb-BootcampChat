@@ -115,6 +115,7 @@ jobs:
           JWT_SECRET=${{ secrets.JWT_SECRET }}
           ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
           ENCRYPTION_SALT=${{ secrets.ENCRYPTION_SALT }}
+          OPENAI_API_KEY="ktb_dkddddddddddddd"
           EOF
 
       - name: Deploy JAR & restart via Makefile
