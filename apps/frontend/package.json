@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "build:production": "npm run build && npm run deploy:static",
-    "deploy:static": "cp -r public .next/standalone/ && cp .next/BUILD_ID .next/standalone/.next/ && cp -r .next/static .next/standalone/.next/"
+    "deploy:static": "mkdir -p .next/standalone/.next && cp -r public .next/standalone/ && cp .next/BUILD_ID .next/standalone/.next/ && cp -r .next/static .next/standalone/.next/"
   },
   "dependencies": {
     "@emoji-mart/data": "^1.1.2",
